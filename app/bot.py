@@ -69,12 +69,15 @@ async def bcbot(ctx, *, broadcast_msg):
     embed.set_footer(text="Please react with an appropriate action to continue")
     if ctx.message.channel.id not in invoker_map:
         invoker_map[ctx.message.channel.id] = {}
-    invoker_map[ctx.message.channel.id][author.id] =  {
-        "menu_id": ctx.message.id,
-        "broadcast_content": broadcast_msg
-    }
+
+    # Not using delete_after so that there's tighter coupling between message
+    # deletion and invoker_map entry deletion
     await ctx.send(embed=embed)
     msg = await ctx.channel.history().get(author__name=bot.user.display_name)
+    invoker_map[ctx.message.channel.id][author.id] =  {
+        "menu_id": msg.id,
+        "broadcast_content": broadcast_msg
+    }
 
     for emoji in options.keys():
         await msg.add_reaction(emoji)
@@ -110,7 +113,22 @@ async def bcbot(ctx, *, broadcast_msg):
 
 @bot.event
 async def on_reaction_add(reaction, user):
-    print(reaction, user)
+    channel_id = reaction.message.channel.id
+
+    if channel_id not in invoker_map:
+        return
+    if user.id not in invoker_map[channel_id]:
+        return
+    print("Reacted Msg ID:", reaction.message.id)
+    print("Menu ID:", invoker_map[channel_id][user.id]["menu_id"])
+    if invoker_map[channel_id][user.id]["menu_id"] != reaction.message.id:
+        return
+    print(f"{reaction}", options)
+    if f"{reaction}" not in options:
+        await reaction.message.edit(
+            embed=reaction.message.embeds[0],
+            content="Please choose a valid option"
+        )
 
 
 if __name__ == '__main__':
