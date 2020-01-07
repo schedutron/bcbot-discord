@@ -50,6 +50,16 @@ async def bcbot(ctx, *, broadcast_msg):
 
     #print(time.ctime())
     embed = discord.Embed(title="New Broadcast", color=0x000000)
+    online = sum(
+        member.status != discord.Status.offline and not member.bot
+        for member in ctx.message.guild.members
+    )
+    print(len(ctx.message.guild.members))
+    all_ = sum(not member.bot for member in ctx.message.guild.members)
+
+    embed.add_field(value="Online", name=online, inline=True)
+    embed.add_field(value="All", name=all_, inline=True)
+    embed.add_field(value='\u200b', name='\u200b')
     embed.add_field(
         value="\n".join(
             [f"[{k}] {v}"  for k, v in list(options.items())[:3]]
