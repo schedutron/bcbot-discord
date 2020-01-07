@@ -1,27 +1,13 @@
 import asyncio
 import json
-import time
+import datetime
 
 import discord
-import requests
 
 import credentials
 
-from discord.ext import commands
-
 bot = discord.Client()
 invoker_map = {}
-# [:speaking_head:] To Online\n"
-#              "[:satellite:] To All\n"
-#              "[:microphone2:] To Role",
-#         name='\u200b',
-#         inline=True
-#     )
-#     embed.add_field(
-#         value="[:loudspeaker:] To Online (embed)\n"
-#              "[:satellite_orbital:] To All (embed)\n"
-#              "[:no_entry_sign:] Cancel",
-# ['\U0001F5E3', '\U0001F4E1', '\U0001F399', '\U0001F4E2', '\U0001F6F0', '\U0001F6AB']:
 options = {
     '\U0001F5E3': 'To Online', '\U0001F4E1': 'To All',
     '\U0001F399': 'To Role', '\U0001F4E2': 'To Online (Embed)',
@@ -43,15 +29,14 @@ async def invoke_menu(recv_msg):
     if author.id in invoker_map.get(recv_msg.channel.id, {}):
         return  # Allow only one message at a time per user per channel
 
-    broadcast_msg = recv_msg.content.lstrip("$bcbot ")
-    embed = discord.Embed(title="New Broadcast", color=0x000000)
+    broadcast_msg = recv_msg.content[6:].strip()  # To strip-off $bcbot 
     online = sum(
         member.status != discord.Status.offline and not member.bot
         for member in recv_msg.guild.members
     )
-
     all_ = sum(not member.bot for member in recv_msg.guild.members)
 
+    embed = discord.Embed(title="New Broadcast", color=0x000000)
     embed.add_field(value="Online", name=online, inline=True)
     embed.add_field(value="All", name=all_, inline=True)
     embed.add_field(value='\u200b', name='\u200b')
@@ -71,15 +56,19 @@ async def invoke_menu(recv_msg):
     )
 
     embed.set_author(name=f"{author}", icon_url=author.avatar_url)
-    embed.set_footer(text="Please react with an appropriate action to continue")
+    embed.set_footer(
+        text="Please react with an appropriate action to continue"
+    )
     if recv_msg.channel.id not in invoker_map:
         invoker_map[recv_msg.channel.id] = {}
 
     # Not using delete_after so that there's tighter coupling between message
     # deletion and invoker_map entry deletion
     await recv_msg.channel.send(embed=embed)
-    msg = await recv_msg.channel.history().get(author__name=bot.user.display_name)
-    invoker_map[recv_msg.channel.id][author.id] =  {
+    msg = await recv_msg.channel.history().get(
+        author__name=bot.user.display_name
+    )
+    invoker_map[recv_msg.channel.id][author.id] = {
         "menu_id": msg.id,
         "broadcast_content": broadcast_msg
     }
@@ -97,7 +86,7 @@ async def invoke_menu(recv_msg):
 async def handle_role_msg(recv_msg):
     if not recv_msg.content.startswith('@'):
         return
-    role = discord.utils.get(recv_msg.guild, name=recv_msg.content[1:])
+    role = discord.utils.get(recv_msg.guild.roles, name=recv_msg.content[1:])
     if role is None:
         return
     channel = recv_msg.channel
@@ -109,35 +98,52 @@ async def handle_role_msg(recv_msg):
         invoker_map[channel.id][recv_msg.author.id]["menu_id"]
     )
     role_rxn = discord.utils.get(menu_msg.reactions, emoji='\U0001F399')
-    role_reactors = await bot.get_reaction_users(role_rxn)
+    role_reactors = await role_rxn.users().flatten()
     if recv_msg.author not in role_reactors:
         return
 
-    # Broadcast if all checks pass
+    # Delete menu and broadcast if all checks pass
+    await menu_msg.delete()
     await broadcast(
         role.members,
         invoker_map[channel.id][recv_msg.author.id]["broadcast_content"]
     )
 
 
-async def broadcast(recipients, msg, as_embed=False):
-    print(f"Broadcast started at: {time.ctime()}")
-    for member in recipients:
-        if member == bot.user:
-            continue
+async def broadcast(recipients, msg, as_embed=False, author=None):
+    print(f"Broadcast started at: {datetime.datetime.now()}")
+    async def send_to(member):
         channel = member.dm_channel
         if channel is None:
             channel = await member.create_dm()
+        await channel.send(msg)
 
+    if as_embed:
+        embed = discord.Embed(title="Broadcast Message", color=0xff26ec)
+        embed.add_field(name="From", value=author.guild)
+        embed.add_field(name=":mega: Message", value=msg)
+        embed.set_author(name=f"{author}", icon_url=author.avatar_url)
+        embed.set_thumbnail(url=author.guild.icon_url)
+        embed.set_footer(
+            text=f"© {author.guild} {datetime.datetime.now().year}"
+        )
+        async def send_to(member):
+            channel = member.dm_channel
+            if channel is None:
+                channel = await member.create_dm()
+            embed.insert_field_at(1, name="To", value=member.mention)
+            await channel.send(embed=embed)
+            embed.remove_field(1)
+
+    for member in recipients:
         try:
-            await channel.send(
-                msg
-            )
+            await send_to(member)
         except discord.errors.Forbidden as e:
             continue
         except Exception as be:
             print(be)
-    print(f"Broadcast ended at: {time.ctime()}")
+
+    print(f"Broadcast ended at: {datetime.datetime.now()}")
 
 
 @bot.event
@@ -195,9 +201,12 @@ async def on_reaction_add(reaction, user):
     else:  # It has to be the cancel option now
         await reaction.message.delete()
         return
+    # Delete menu message and initiate broadcast
+    await reaction.message.delete()
     await broadcast(
         recipients,
-        invoker_map[channel.id][user.id]["broadcast_content"], as_embed
+        invoker_map[channel.id][user.id]["broadcast_content"], as_embed,
+        author=user
     )
 
 
