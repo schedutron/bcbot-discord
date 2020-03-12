@@ -20,3 +20,5 @@ $ python3 -m app.bot
 
 ## Short Demo:
 ![Small demo gif for the broadcast bot usage](/demo.gif)
+
+To prevent misuse (and redundancy), there's a 60-second limit on invoking the broadcast command per user per channel (which can be changed easily).
