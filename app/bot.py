@@ -1,6 +1,7 @@
 import asyncio
 import json
 import datetime
+from math import ceil
 
 import discord
 
@@ -13,6 +14,8 @@ options = {
     '\U0001F399': 'To Role', '\U0001F4E2': 'To Online (Embed)',
     '\U0001F6F0': 'To All (Embed)', '\U0001F6AB': 'Cancel'
     }
+
+prefix = "#bc "
 
 async def invoke_menu(recv_msg):
     if recv_msg.channel.id in invoker_map:
@@ -29,7 +32,7 @@ async def invoke_menu(recv_msg):
     if author.id in invoker_map.get(recv_msg.channel.id, {}):
         return  # Allow only one message at a time per user per channel
 
-    broadcast_msg = recv_msg.content[6:].strip()  # To strip-off $bcbot 
+    broadcast_msg = recv_msg.content[len(prefix):].strip()  # To strip-off prefix 
     online = sum(
         member.status != discord.Status.offline and not member.bot
         for member in recv_msg.guild.members
@@ -79,8 +82,13 @@ async def invoke_menu(recv_msg):
     print(invoker_map)
     print('------------------')
     await asyncio.sleep(60)
-    del invoker_map[msg.channel.id][author.id]  # Delete entry on timeout
-    await msg.delete()
+    # Following raises (harmless) exception for some reason
+    try:
+        # Delete entry on timeout
+        del invoker_map[msg.channel.id][author.id]
+        await msg.delete()
+    except Exception as e:
+        print(f'Warning: {e}')
 
 
 async def handle_role_msg(recv_msg):
@@ -111,37 +119,59 @@ async def handle_role_msg(recv_msg):
 
 
 async def broadcast(recipients, msg, as_embed=False, author=None):
-    print(f"Broadcast started at: {datetime.datetime.now()}")
     async def send_to(member):
-        channel = member.dm_channel
-        if channel is None:
-            channel = await member.create_dm()
-        await channel.send(msg)
-
-    if as_embed:
-        embed = discord.Embed(title="Broadcast Message", color=0xff26ec)
-        embed.add_field(name="From", value=author.guild)
-        embed.add_field(name=":mega: Message", value=msg)
-        embed.set_author(name=f"{author}", icon_url=author.avatar_url)
-        embed.set_thumbnail(url=author.guild.icon_url)
-        embed.set_footer(
-            text=f"© {author.guild} {datetime.datetime.now().year}"
-        )
-        async def send_to(member):
-            channel = member.dm_channel
-            if channel is None:
-                channel = await member.create_dm()
-            embed.insert_field_at(1, name="To", value=member.mention)
-            await channel.send(embed=embed)
-            embed.remove_field(1)
-
-    for member in recipients:
         try:
-            await send_to(member)
+            await member.send(msg)
         except discord.errors.Forbidden as e:
-            continue
+            print(e)
         except Exception as be:
             print(be)
+
+    if as_embed:
+        async def send_to(member):
+            embed = discord.Embed(title="Broadcast Message", color=0xff26ec)
+            embed.add_field(name="From", value=author.guild)
+            embed.add_field(name="To", value=member.mention)
+            embed.add_field(name=":mega: Message", value=msg)
+            embed.set_author(name=f"{author}", icon_url=author.avatar_url)
+            embed.set_thumbnail(url=author.guild.icon_url)
+            embed.set_footer(
+                text=f"© {author.guild} {datetime.datetime.now().year}"
+            )
+            try:
+                await member.send(embed=embed)
+            except discord.errors.Forbidden as e:
+                print(e)
+            except Exception as be:
+                print(be)
+
+    # for member in recipients:
+    #     try:
+    #         asyncio.ensure_future(send_to(member))
+    #     except discord.errors.Forbidden as e:
+    #         continue
+    #     except Exception as be:
+    #         print(be)
+    online = [member for member in recipients if member.status != discord.Status.offline]
+    offline = [member for member in recipients if member.status == discord.Status.offline]
+
+    bufsize = int(len(recipients) ** 0.5)
+
+    print(f"Broadcast started at: {datetime.datetime.now()}")
+
+    await asyncio.gather(
+        *[
+            asyncio.gather(*[send_to(member) for member in online[i*bufsize:(i+1)*bufsize]])
+            for i in range(len(recipients)//bufsize)
+            ]
+        )
+
+    await asyncio.gather(
+        *[
+            asyncio.gather(*[send_to(member) for member in offline[i*bufsize:(i+1)*bufsize]])
+            for i in range(len(recipients)//bufsize)
+            ]
+        ) 
 
     print(f"Broadcast ended at: {datetime.datetime.now()}")
 
@@ -149,11 +179,17 @@ async def broadcast(recipients, msg, as_embed=False, author=None):
 @bot.event
 async def on_ready():
     print(f"Logged on as {bot.user}!")
-
+    await bot.change_presence(
+        status=discord.Status.online,
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name=f'for broadcast requests | Use {prefix}<your message> to start broadcasting!')
+    )
 
 @bot.event
 async def on_message(recv_msg):
-    if recv_msg.content.startswith("$bcbot"):
+    # Using this instead of @bot.command for whitespacing
+    if recv_msg.content.startswith(prefix):
         await invoke_menu(recv_msg)
     elif recv_msg.content.startswith("@"):
         await handle_role_msg(recv_msg)
